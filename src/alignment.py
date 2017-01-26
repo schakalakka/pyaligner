@@ -61,53 +61,71 @@ class Alignment:
         # m[][][1] deletion matrix
         # m[][][2] insertion matrix
         m = np.zeros((len(a) + 1, len(b) + 1, 3), dtype=numpy_type)
-        self.trace_matrix = np.zeros((len(a) + 1, len(b) + 1, 3), dtype=np.int8)
+        trace_matrix = np.zeros((len(a) + 1, len(b) + 1, 3), dtype=np.int8)
+        trace_matrix[0][0] = [3, 3, 3]
 
         gap_open = self.gap_open
         gap_extend = self.gap_extend
         match = self.match
         mismatch = self.mismatch
+        local = self.local
 
         # initialize first row and column
         for i in range(1, len(a) + 1):
             m[i][0][0] = m[i][0][2] = min_val
-            m[i][0][1] = gap_open + (i - 1) * gap_extend if not self.left else 0
-            self.trace_matrix[i][0] = [1, 1, 1]
+            if not self.left and not local:
+                m[i][0][1] = gap_open + (i - 1) * gap_extend
+            trace_matrix[i][0] = [1, 1, 1]
 
         for j in range(1, len(b) + 1):
             m[0][j][0] = m[0][j][1] = min_val
-            m[0][j][2] = gap_open + (j - 1) * gap_extend if not self.top else 0
-            self.trace_matrix[0][j] = [2, 2, 2]
+            if not self.top and not local:
+                m[0][j][2] = gap_open + (j - 1) * gap_extend
+            trace_matrix[0][j] = [2, 2, 2]
 
+        # if local alignment is activated we can choose in each step to start an alignment
+        # i.e. 0 is the fourth choice for the current maxima
+        # when no local alignment is wished we get the option min_val which will never be the maximum
+        fourth_choice = 0 if local else min_val
         for i in range(1, len(a) + 1):
             for j in range(1, len(b) + 1):
                 current_score = match if a[i - 1] == b[j - 1] else mismatch
-                m[i, j, 0] = m[i - 1, j - 1].max() + current_score
-                m[i, j, 1] = max(m[i - 1, j][0] + gap_open, m[i - 1, j][1] + gap_extend, m[i - 1, j][2] + gap_open)
-                m[i, j, 2] = max(m[i, j - 1][0] + gap_open, m[i, j - 1][1] + gap_open, m[i, j - 1][2] + gap_extend)
-                self.trace_matrix[i, j][0] = m[i - 1, j - 1].argmax()
-                self.trace_matrix[i, j][1] = np.array(
-                    [m[i - 1, j][0] + gap_open, m[i - 1, j][1] + gap_extend, m[i - 1, j][2] + gap_open]).argmax()
-                self.trace_matrix[i, j][2] = np.array(
-                    [m[i, j - 1][0] + gap_open, m[i, j - 1][1] + gap_open, m[i, j - 1][2] + gap_extend]).argmax()
+                m[i, j, 0] = max(m[i - 1, j - 1].max() + current_score, fourth_choice)
+                m[i, j, 1] = max(m[i - 1, j][0] + gap_open, m[i - 1, j][1] + gap_extend, m[i - 1, j][2] + gap_open,
+                                 fourth_choice)
+                m[i, j, 2] = max(m[i, j - 1][0] + gap_open, m[i, j - 1][1] + gap_open, m[i, j - 1][2] + gap_extend,
+                                 fourth_choice)
+                trace_matrix[i, j][0] = 3 if m[i, j, 0] == fourth_choice else m[i - 1, j - 1].argmax()
+                trace_matrix[i, j][1] = np.array(
+                    [m[i - 1, j][0] + gap_open, m[i - 1, j][1] + gap_extend, m[i - 1, j][2] + gap_open,
+                     fourth_choice]).argmax()
+                trace_matrix[i, j][2] = np.array(
+                    [m[i, j - 1][0] + gap_open, m[i, j - 1][1] + gap_open, m[i, j - 1][2] + gap_extend,
+                     fourth_choice]).argmax()
         self.score = m[len(a), len(b)].max()
         self.result_row = len(a)
         self.result_col = len(b)
-        if self.right:
-            max_elem_in_last_col = m.max(axis=2).max(axis=0)[len(b)]
-            if self.score < max_elem_in_last_col:
-                self.score = max_elem_in_last_col
-                self.result_row = m.max(axis=2).argmax(axis=0)[len(b)]
-                self.result_col = len(b)
-        if self.bottom:
-            max_elem_in_last_row = m.max(axis=2).max(axis=1)[len(a)]
-            if self.score < max_elem_in_last_row:
-                self.score = max_elem_in_last_row
-                self.result_col = m.max(axis=2).argmax(axis=1)[len(a)]
-                self.result_row = len(a)
-        self.result_spec = m[self.result_row, self.result_col].argmax()
+
+        if self.local:
+            self.score = m.max()
+            self.result_row, self.result_col, self.result_spec = np.unravel_index(m.argmax(), m.shape)
+        else:  # TODO speed up!!
+            if self.right:
+                max_elem_in_last_col = m.max(axis=2).max(axis=0)[len(b)]
+                if self.score < max_elem_in_last_col:
+                    self.score = max_elem_in_last_col
+                    self.result_row = m.max(axis=2).argmax(axis=0)[len(b)]
+                    self.result_col = len(b)
+            if self.bottom:
+                max_elem_in_last_row = m.max(axis=2).max(axis=1)[len(a)]
+                if self.score < max_elem_in_last_row:
+                    self.score = max_elem_in_last_row
+                    self.result_col = m.max(axis=2).argmax(axis=1)[len(a)]
+                    self.result_row = len(a)
+            self.result_spec = m[self.result_row, self.result_col].argmax()
 
         self.score_matrix = m
+        self.trace_matrix = trace_matrix
 
     def get_score(self) -> int:
         """
@@ -128,16 +146,19 @@ class Alignment:
         spec = self.result_spec
         trace = self.trace_matrix
         aligned_a = aligned_b = middle_string = ''  # aligned strings of a nd b
-        if row < len(a):
-            aligned_a = a[row:]
-            middle_string = (len(a) - row) * ' '
-            aligned_b = (len(a) - row) * '-'
-        if col < len(b):
-            aligned_b = b[col:]
-            aligned_a = (len(b) - col) * '-'
-            middle_string = (len(b) - col) * ' '
+        if not self.local:
+            if row < len(a):
+                aligned_a = a[row:]
+                middle_string = (len(a) - row) * ' '
+                aligned_b = (len(a) - row) * '-'
+            if col < len(b):
+                aligned_b = b[col:]
+                aligned_a = (len(b) - col) * '-'
+                middle_string = (len(b) - col) * ' '
         while row > 0 or col > 0:
             new_spec = trace[row][col][spec]
+            if new_spec == 3:
+                break
             if spec == 0:
                 row -= 1
                 col -= 1
@@ -159,15 +180,32 @@ class Alignment:
         self.aligned_b = aligned_b
         self.middle_string = middle_string
 
+    def __bool__(self) -> bool:
+        """
+
+        :return:
+        """
+        if self.score:
+            return True
+        else:
+            return False
+
+    def __repr__(self) -> str:
+        """
+
+        :return:
+        """
+        start_a = self.result_row - len(self.aligned_a) + 1
+        start_b = self.result_col - len(self.aligned_b) + 1
+        filler = len(self.aligned_a) * ' '
+        return f'Score: {self.score}\nStart indices: {start_a}, {start_a}\n{self.aligned_a}\n{self.middle_string}\n{self.aligned_b}'
+
     def print_alignment(self) -> None:
         """
         Prints the alignment to the console.
         :return:
         """
-        print('Score: {}'.format(self.score))
-        print(self.aligned_a)
-        print(self.middle_string)
-        print(self.aligned_b)
+        print(self)
 
     def align_score(self):
         a = self.a
